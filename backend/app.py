@@ -1,5 +1,6 @@
 """
 Rubicon Flask application factory.
+Server-side pagination & memory optimization build.
 
 Run:
     cp .env.example .env         # fill in DATABASE_URL etc.
