@@ -93,6 +93,9 @@ def batch_ingest_zips(
                         and any(name.lower().endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".webp"))
                     ]
 
+                    if not img_entries:
+                        continue
+
                     print(f"Found {len(img_entries)} photos in {z_name}")
 
                     for i_idx, name in enumerate(img_entries, 1):

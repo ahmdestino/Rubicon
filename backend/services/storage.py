@@ -15,8 +15,11 @@ working after an event switches Drive accounts.
 """
 import gc
 import io
+import logging
 import os
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from PIL import Image, ImageOps
 

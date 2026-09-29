@@ -4,60 +4,80 @@ import {
   Eye,
   Download,
   Maximize2,
+  Loader2,
 } from 'lucide-react';
+import { api } from '../api';
 import { Pagination } from './ui/Pagination';
 
 export const EventGallery = ({
   event,
-  photos = [],
+  photos: initialPhotos = [],
   onOpenLightbox,
   onDownloadSingle,
 }) => {
   const [selectedSession, setSelectedSession] = useState('All Sessions');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [sortBy, setSortBy] = useState('popular');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(24);
 
+  const [galleryPhotos, setGalleryPhotos] = useState(initialPhotos);
+  const [totalPhotosCount, setTotalPhotosCount] = useState(event?.totalPhotos || initialPhotos.length);
+  const [totalPages, setTotalPages] = useState(1);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Debounce search query input (300ms) to avoid server spam on every keystroke
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   // Reset to page 1 whenever filters or search query change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedSession, searchQuery, sortBy]);
+  }, [selectedSession, debouncedQuery, sortBy]);
 
-  const filteredPhotos = photos
-    .filter((photo) => {
-      if (selectedSession !== 'All Sessions' && photo.sessionTag !== selectedSession) {
-        return false;
-      }
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchesFile = (photo.filename || '').toLowerCase().includes(q);
-        const matchesSession = (photo.sessionTag || '').toLowerCase().includes(q);
-        const matchesPhotographer = (photo.photographerName || '').toLowerCase().includes(q);
-        const matchesFace = (photo.faces || []).some((f) =>
-          f.participantName?.toLowerCase().includes(q)
-        );
-        if (!matchesFile && !matchesSession && !matchesPhotographer && !matchesFace) {
-          return false;
-        }
-      }
-      return true;
-    })
-    .sort((a, b) => {
-      if (sortBy === 'popular') return (b.viewCount || 0) - (a.viewCount || 0);
-      if (sortBy === 'downloads') return (b.downloadCount || 0) - (a.downloadCount || 0);
-      if (sortBy === 'taken') {
-        const taken = (p) => new Date(p.exif?.capturedAt || p.uploadedAt).getTime();
-        return taken(b) - taken(a);
-      }
-      return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime();
-    });
+  // Fetch page data from backend dynamically
+  useEffect(() => {
+    if (!event?.id) return;
 
-  const totalPages = Math.ceil(filteredPhotos.length / pageSize) || 1;
-  const paginatedPhotos = filteredPhotos.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
+    let isMounted = true;
+    setIsLoading(true);
+
+    const params = {
+      page: currentPage,
+      pageSize,
+      sort: sortBy,
+    };
+    if (selectedSession && selectedSession !== 'All Sessions') {
+      params.session = selectedSession;
+    }
+    if (debouncedQuery.trim()) {
+      params.q = debouncedQuery.trim();
+    }
+
+    api.listPhotos(event.id, params)
+      .then((res) => {
+        if (!isMounted) return;
+        const items = res.items || res;
+        setGalleryPhotos(items);
+        setTotalPhotosCount(res.total ?? items.length);
+        setTotalPages(res.totalPages ?? (Math.ceil((res.total ?? items.length) / pageSize) || 1));
+      })
+      .catch((err) => {
+        console.error('Failed to load gallery photos:', err);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [event?.id, currentPage, pageSize, selectedSession, debouncedQuery, sortBy]);
 
   const handlePageChange = (newPage) => {
     setCurrentPage(newPage);
@@ -77,7 +97,7 @@ export const EventGallery = ({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by participant name, session, or filename..."
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-600"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-indigo-600 transition-colors"
             />
           </div>
 
@@ -120,26 +140,33 @@ export const EventGallery = ({
 
       {/* Photo count header & Pagination top bar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between text-xs text-slate-500 px-1 gap-2">
-        <span>
-          Showing <strong className="text-slate-900 font-bold">{filteredPhotos.length.toLocaleString()}</strong> of{' '}
-          <strong className="text-slate-900 font-bold">{(event?.totalPhotos || photos.length).toLocaleString()}</strong> photos in database
+        <span className="flex items-center space-x-2">
+          <span>
+            Page <strong className="text-slate-900 font-bold">{currentPage}</strong> of{' '}
+            <strong className="text-slate-900 font-bold">{totalPages}</strong> &bull; Showing{' '}
+            <strong className="text-slate-900 font-bold">{galleryPhotos.length}</strong> of{' '}
+            <strong className="text-slate-900 font-bold">{totalPhotosCount.toLocaleString()}</strong> photos
+          </span>
+          {isLoading && <Loader2 className="w-3.5 h-3.5 text-indigo-600 animate-spin" />}
         </span>
-        <span className="text-emerald-700 font-mono font-medium">Live Media Store</span>
+        <span className="text-emerald-700 font-mono font-medium">Server-Paginated Engine</span>
       </div>
 
       {/* Empty state */}
-      {photos.length === 0 && (
+      {!isLoading && galleryPhotos.length === 0 && (
         <div className="text-center py-16 bg-white rounded-2xl border border-slate-200 space-y-2 shadow-sm">
-          <div className="text-sm font-semibold text-slate-700">No photos published yet</div>
+          <div className="text-sm font-semibold text-slate-700">No photos found</div>
           <div className="text-xs text-slate-500">
-            Upload photos from the Admin Panel to populate this gallery.
+            {debouncedQuery || selectedSession !== 'All Sessions'
+              ? 'Try adjusting your search query or session filters.'
+              : 'Upload photos from the Admin Panel to populate this gallery.'}
           </div>
         </div>
       )}
 
       {/* Photos Masonry / Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-        {paginatedPhotos.map((photo) => (
+      <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 transition-opacity ${isLoading ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
+        {galleryPhotos.map((photo) => (
           <div
             key={photo.id}
             className="group relative bg-white rounded-2xl overflow-hidden border border-slate-200 hover:border-slate-300 shadow-sm transition-all"
@@ -208,7 +235,7 @@ export const EventGallery = ({
         currentPage={currentPage}
         totalPages={totalPages}
         pageSize={pageSize}
-        totalItems={filteredPhotos.length}
+        totalItems={totalPhotosCount}
         onPageChange={handlePageChange}
         onPageSizeChange={setPageSize}
         pageSizeOptions={[24, 48, 96]}

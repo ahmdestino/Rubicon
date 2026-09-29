@@ -20,7 +20,7 @@ def list_photos(event_id):
     q = (request.args.get("q") or "").strip().lower()
     sort = request.args.get("sort", "newest")
     page = max(1, int(request.args.get("page", 1)))
-    page_size = min(10000, int(request.args.get("pageSize", 5000)))
+    page_size = min(500, max(1, int(request.args.get("pageSize", 24))))
 
     query = (
         Photo.query
@@ -62,7 +62,15 @@ def list_photos(event_id):
         total = query.count()
         page_rows = query.offset((page - 1) * page_size).limit(page_size).all()
 
-    return jsonify({"items": [p.to_dict() for p in page_rows], "total": total})
+    import math
+    total_pages = math.ceil(total / page_size) if total > 0 else 1
+    return jsonify({
+        "items": [p.to_dict() for p in page_rows],
+        "total": total,
+        "page": page,
+        "pageSize": page_size,
+        "totalPages": total_pages,
+    })
 
 
 @bp.get("/photos/<pid>")

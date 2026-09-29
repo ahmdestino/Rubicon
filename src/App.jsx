@@ -78,7 +78,7 @@ export default function App() {
     return Promise.all([
       api.listPhotographers(eventId),
       api.listParticipants(eventId),
-      api.listPhotos(eventId, { pageSize: 5000 }),
+      api.listPhotos(eventId, { pageSize: 48 }),
       api.storageStats(eventId).then((s) => s.provider).catch(() => null),
       api.getEvent(eventId),
     ]).then(([ph, pa, photoResp, storage, freshEvent]) => {
