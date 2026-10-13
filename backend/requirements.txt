@@ -22,13 +22,13 @@ requests==2.32.3
 python-dotenv==1.0.1
 
 # ===========================================================================
-# Face recognition — InsightFace (ArcFace, 512-d) runs in-process
-# (services/faces.py). NumPy powers cosine search (services/search.py); Pillow
-# resizes uploads + reads EXIF on every upload (services/storage.py). InsightFace
-# builds against the NumPy 1.x ABI, so keep numpy pinned < 2.0.
+# Image processing — NumPy powers cosine search (services/search.py); Pillow
+# resizes uploads + reads EXIF (services/storage.py) and pre-processes images
+# before sending to the remote Face API (services/faces.py).
+#
+# NOTE: insightface / onnxruntime / opencv are NOT installed here — all ML
+# inference is handled by the dedicated Face API service (Server 2).
+# Keep numpy pinned < 2.0 to match the face API's ABI expectations.
 # ===========================================================================
 numpy==1.26.4
 Pillow==10.4.0
-insightface==0.7.3
-onnxruntime==1.19.2
-opencv-python-headless==4.10.0.84
