@@ -29,8 +29,20 @@ class FaceServiceError(RuntimeError):
 
 
 def warm_up():
-    """No-op: inference runs on the remote Face API, nothing to warm here."""
-    return
+    """Ping the remote Face API /health to wake it from Render cold sleep.
+
+    Called from a daemon thread on Gunicorn boot (app.py) so the service is
+    warm before the first real user hits /search/selfie.  Failures are logged
+    but never raised — a cold-start warning is better than crashing on startup.
+    """
+    if not Config.FACE_API_URL:
+        return
+    import logging
+    try:
+        resp = requests.get(f"{Config.FACE_API_URL}/health", timeout=120)
+        logging.info("[faces] Face API warm-up ping: %s %s", resp.status_code, resp.text[:80])
+    except Exception as exc:
+        logging.warning("[faces] Face API warm-up failed (non-fatal): %s", exc)
 
 
 def _to_rgb_bytes(raw: bytes) -> bytes:

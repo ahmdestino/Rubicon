@@ -87,7 +87,7 @@ class Config:
     # constrained web container.
     FACE_API_URL = os.getenv("FACE_API_URL", "").rstrip("/")
     FACE_API_TOKEN = os.getenv("FACE_API_TOKEN", "")
-    FACE_API_TIMEOUT = int(os.getenv("FACE_API_TIMEOUT", "90"))
+    FACE_API_TIMEOUT = int(os.getenv("FACE_API_TIMEOUT", "45"))
 
     # Google OAuth
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
