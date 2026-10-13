@@ -1,16 +1,22 @@
 """
 Vector search over stored face embeddings using NumPy cosine similarity.
 
-This is the real "Instant Vector Search" the ArchitectureModal advertises and
-the direct replacement for the hardcoded match list in src/utils/faceMatcher.ts.
-Embeddings are stored as native float arrays; at event scale a brute-force
-cosine scan in NumPy is fast enough and needs no database extension.
+Embeddings are stored as native PostgreSQL float arrays; at event scale a
+brute-force cosine scan in NumPy is fast enough and needs no database
+extension.
+
+Memory strategy: we SELECT only (id, embedding) — not full ORM objects — and
+stream rows in chunks so SQLAlchemy never materialises the whole event's face
+table into Python objects at once.
 """
 import numpy as np
+from sqlalchemy import select, text
 
 from config import Config
 from extensions import db
 from models import FaceDetection, Photo
+
+_CHUNK = 500  # rows fetched per round-trip; tune to stay under memory budget
 
 
 def search_by_embedding(event_id: str, embedding: np.ndarray, limit: int = 60,
@@ -19,6 +25,10 @@ def search_by_embedding(event_id: str, embedding: np.ndarray, limit: int = 60,
     Return [(FaceDetection, similarity)] whose faces are the nearest neighbours of
     `embedding` within an event, filtered by cosine-similarity threshold and sorted
     best-first. similarity = 1 - cosine_distance.
+
+    Only (id, embedding) columns are streamed from the DB; full FaceDetection
+    objects are fetched only for the rows that pass the threshold, keeping peak
+    RAM proportional to matches rather than to the entire event's face table.
     """
     if threshold is None:
         threshold = Config.FACE_MATCH_THRESHOLD
@@ -29,42 +39,45 @@ def search_by_embedding(event_id: str, embedding: np.ndarray, limit: int = 60,
         return []
     query_vec = query_vec / query_norm
 
-    rows = (
-        db.session.query(FaceDetection)
+    # Lightweight query: only two columns, no ORM object construction.
+    stmt = (
+        select(FaceDetection.id, FaceDetection.embedding)
         .join(Photo, FaceDetection.photo_id == Photo.id)
         .filter(Photo.event_id == event_id)
         .filter(FaceDetection.embedding.isnot(None))
-        .all()
+        .execution_options(stream_results=True)
     )
 
-    # Vectorized cosine similarity using 2D NumPy matrix dot product.
-    valid_faces = []
-    matrix_list = []
-    for face in rows:
-        if face.embedding and len(face.embedding) > 0:
-            valid_faces.append(face)
-            matrix_list.append(face.embedding)
+    candidates = []  # list of (face_id, similarity)
 
-    if not matrix_list:
+    with db.engine.connect() as conn:
+        result = conn.execute(stmt)
+        while True:
+            chunk = result.fetchmany(_CHUNK)
+            if not chunk:
+                break
+            ids = [row[0] for row in chunk]
+            vecs = [row[1] for row in chunk if row[1] and len(row[1]) > 0]
+            if not vecs:
+                continue
+
+            matrix = np.array(vecs, dtype=np.float32)
+            norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            sims = np.dot(matrix / norms, query_vec)
+
+            for face_id, sim in zip(ids, sims):
+                if sim >= threshold:
+                    candidates.append((face_id, float(sim)))
+
+    if not candidates:
         return []
 
-    # Convert to 2D numpy array shape (N, dim)
-    matrix = np.array(matrix_list, dtype=np.float32)
+    # Sort and take top-k, then fetch only the winning rows as full ORM objects.
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    top = candidates[:limit]
+    top_ids = [fid for fid, _ in top]
+    sim_map = {fid: sim for fid, sim in top}
 
-    # Normalize matrix rows defensively
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    norms[norms == 0] = 1.0
-    norm_matrix = matrix / norms
-
-    # Matrix-vector dot product (C/BLAS accelerated) -> shape (N,)
-    similarities = np.dot(norm_matrix, query_vec)
-
-    # Filter by threshold and take top-k
-    valid_mask = similarities >= threshold
-    if not np.any(valid_mask):
-        return []
-
-    matching_indices = np.where(valid_mask)[0]
-    sorted_indices = matching_indices[np.argsort(-similarities[matching_indices])[:limit]]
-
-    return [(valid_faces[idx], float(similarities[idx])) for idx in sorted_indices]
+    faces = db.session.query(FaceDetection).filter(FaceDetection.id.in_(top_ids)).all()
+    return [(f, sim_map[f.id]) for f in faces]
